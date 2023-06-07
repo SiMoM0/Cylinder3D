@@ -287,7 +287,7 @@ class Asymm_3d_spconv(nn.Module):
         self.ReconNet = ReconBlock(2 * init_size, 2 * init_size, indice_key="recon")
 
         self.logits = spconv.SubMConv3d(4 * init_size, nclasses, indice_key="logit", kernel_size=3, stride=1, padding=1,
-                                        bias=True)
+                                        bias=True).to(device='cpu')
 
     def forward(self, voxel_features, coors, batch_size):
         # x = x.contiguous()

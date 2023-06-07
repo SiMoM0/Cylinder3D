@@ -59,7 +59,8 @@ def build_dataset(dataset_config,
     return demo_dataset_loader
 
 def main(args):
-    pytorch_device = torch.device('cuda:0')
+    #pytorch_device = torch.device('cuda:0')
+    pytorch_device = torch.device('cpu')
     config_path = args.config_path
     configs = load_config_data(config_path)
     dataset_config = configs['dataset_params']
