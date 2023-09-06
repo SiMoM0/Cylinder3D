@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 # author: Ptzu
 # @file: demo_folder.py
+# Usage: python3 run_demo.py <pandaset_path> <prediction_path>
 
 import os
 import time
@@ -63,12 +64,12 @@ def build_dataset(dataset_config,
 
 def main(args):
     pytorch_device = torch.device('cuda:0')
-    config_path = args.config_path
+    config_path = args['config']
     configs = load_config_data(config_path)
     dataset_config = configs['dataset_params']
-    data_dir = args.demo_folder
-    demo_label_dir = args.demo_label_folder
-    save_dir = args.save_folder + "/"
+    data_dir = args['demo_folder']
+    demo_label_dir = args['label_folder']
+    save_dir = args['save_folder'] + "/"
 
     demo_batch_size = 1
     model_config = configs['model_params']
@@ -98,12 +99,16 @@ def main(args):
         semkittiyaml = yaml.safe_load(stream)
     inv_learning_map = semkittiyaml['learning_map_inv']
 
-    my_model.eval()
+    my_model.eval() # using eval improve the results
     hist_list = []
     demo_loss_list = []
+    unique_gt = set() # labels in ground truth
     with torch.no_grad():
         for i_iter_demo, (_, demo_vox_label, demo_grid, demo_pt_labs, demo_pt_fea) in enumerate(
                 demo_dataset_loader):
+            # add labels that appear in ground truth
+            for labl in np.unique(demo_pt_labs):
+                unique_gt.add(labl)
             demo_pt_fea_ten = [torch.from_numpy(i).type(torch.FloatTensor).to(pytorch_device) for i in
                               demo_pt_fea]
             demo_grid_ten = [torch.from_numpy(i).to(pytorch_device) for i in demo_grid]
@@ -128,11 +133,13 @@ def main(args):
 
     if demo_label_dir != '':
         my_model.train()
+        unique_label_presence = [index in unique_gt for index in range(1, 20)]
         iou = per_class_iu(sum(hist_list))
         print('Validation per class iou: ')
-        for class_name, class_iou in zip(unique_label_str, iou):
-            print('%s : %.2f%%' % (class_name, class_iou * 100))
-        val_miou = np.nanmean(iou) * 100
+        for presence, class_name, class_iou in zip(unique_label_presence, unique_label_str, iou):
+            print('%s : %.2f%% %s' % (class_name, class_iou * 100, str(presence)))
+        #val_miou = np.nanmean(iou) * 100
+        val_miou = compute_miou(iou, unique_label_presence)
         del demo_vox_label, demo_grid, demo_pt_fea, demo_grid_ten
 
         print('Current val miou is %.3f' %
@@ -140,15 +147,52 @@ def main(args):
         print('Current val loss is %.3f' %
               (np.mean(demo_loss_list)))
 
-if __name__ == '__main__':
-    # Training settings
-    parser = argparse.ArgumentParser(description='')
-    parser.add_argument('-y', '--config_path', default='config/semantickitti.yaml')
-    parser.add_argument('--demo-folder', type=str, default='', help='path to the folder containing demo lidar scans', required=True)
-    parser.add_argument('--save-folder', type=str, default='', help='path to save your result', required=True)
-    parser.add_argument('--demo-label-folder', type=str, default='', help='path to the folder containing demo labels')
-    args = parser.parse_args()
+    return val_miou, np.mean(demo_loss_list), iou
 
-    print(' '.join(sys.argv))
-    print(args)
-    main(args)
+def compute_miou(iou, label_pres):
+    'Consider only labels in ground truth'
+    
+    return np.nanmean(iou[label_pres]) * 100
+
+if __name__ == '__main__':
+
+    dataset_path = sys.argv[1]
+    output_path = sys.argv[2]
+
+    miou = 0.0
+    loss = 0.0
+    counter = 0
+
+    for seq in sorted(os.listdir(dataset_path)):
+
+        #print(os.path.join(dataset_path, seq))
+
+        demo_folder = os.path.join(dataset_path, seq, 'lidar/')
+        save_folder = os.path.join(output_path, seq)
+        label_folder = os.path.join(dataset_path, seq, 'annotations', 'semseg')
+        
+        #skip sequences with no semantic annotations
+        if not os.path.exists(label_folder):
+            continue
+
+        # create folder for predictions
+        os.mkdir(os.path.join(save_folder))
+
+        # Training settings
+        args = {}
+        args['config'] = 'config/semantickitti.yaml'
+        args['demo_folder'] = demo_folder
+        args['save_folder'] = save_folder
+        args['label_folder'] = label_folder
+
+        print(' '.join(sys.argv))
+        print(args)
+
+        curr_miou, curr_loss, curr_iou = main(args)
+        miou += curr_miou
+        loss += curr_loss
+        #iou += curr_iou
+        counter += 1
+
+    print(f'\nVAL MIOU = {miou/counter}')
+    print(f'\nVAL LOSS = {loss/counter}')
